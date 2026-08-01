@@ -28,7 +28,7 @@ anyone representing the project elsewhere.
 
 ## Enforcement
 
-Report problems to **joepetjr@gmail.com**. Reports are handled privately, and the reporter's
+Report problems to **backroadcreativeco@gmail.com**. Reports are handled privately, and the reporter's
 identity is not shared.
 
 The maintainer will respond with whatever is warranted — a private word, an edit or removal
