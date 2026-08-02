@@ -12,7 +12,7 @@ Report privately, not in the public issue tracker.
 - Use GitHub's [private vulnerability
   reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability)
   on this repository, or
-- email **joepetjr@gmail.com** with `agent-audit security` in the subject.
+- email **backroadcreativeco@gmail.com** with `agent-audit security` in the subject.
 
 Please include what you found, how to reproduce it, and what an attacker could achieve.
 Expect an acknowledgement within a few days. This is a small project maintained in spare
