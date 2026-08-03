@@ -109,6 +109,31 @@ in every report — work without it.
 
 Point `AGENT_AUDIT_CLAUDE_BIN` at a different executable if yours is not called `claude`.
 
+### Windows installer
+
+Each release also carries `agent-audit-setup-<version>.exe` on its
+[releases page](https://github.com/Back-Road-Creative/agent-audit/releases) — agent-audit
+frozen into one executable, so it needs no Python. It installs into Program Files, appends
+that directory to the system `PATH`, and registers an uninstaller in Add/Remove Programs.
+Open a *new* terminal afterwards; one that was already open still holds the old `PATH`.
+
+Two things to know before downloading it.
+
+**The `claude` CLI is not bundled.** The installer contains agent-audit and nothing else,
+so the prerequisite above still applies: install [Claude Code](https://www.anthropic.com/claude-code)
+separately and have `claude` on `PATH` before the model-backed passes will run. It is
+separately distributed and separately authenticated, and no copy of it belongs inside this
+installer. The deterministic commands — `skills manifest`, `skills diff`, `--focus
+structural` — work without it.
+
+**The build is not code-signed.** There is no code-signing certificate for this project, so
+Windows cannot show you a publisher. Expect the blue *"Windows protected your PC"* box —
+"Microsoft Defender SmartScreen prevented an unrecognized app from starting" — which runs
+the installer only after **More info** → **Run anyway**, and expect your browser to warn
+during the download. That is simply what an unsigned binary looks like; it is not evidence
+the file is safe. If you would rather not make that call, `pip install agent-audit` needs no
+installer.
+
 ## Usage
 
 ```bash
