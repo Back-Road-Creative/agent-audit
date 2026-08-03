@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1 - 2026-08-03
+
+### Added
+
+- Windows installer. Pushing a `v*` tag builds a PyInstaller one-file
+  executable on `windows-latest`, wraps it with Inno Setup, and attaches the
+  installer to that tag's GitHub release. The installer adds the command to
+  the machine PATH and registers an uninstaller. `workflow_dispatch` runs the
+  same build and publishes nothing, keeping the installer as an artifact.
+- The build is unsigned, so Windows SmartScreen warns on first run.
+- The Claude Code CLI is required at runtime and is not bundled.
+
 ## 0.1.0 — 2026-07-31
 
 First release.
