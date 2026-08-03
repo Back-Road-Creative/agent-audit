@@ -9,6 +9,8 @@ venv/
 dist/
 build/
 *.egg-info/
+# PyInstaller writes one of these into the repo root on every Windows build.
+*.spec
 .coverage
 htmlcov/
 
