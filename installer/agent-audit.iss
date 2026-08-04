@@ -42,14 +42,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; edit below without a logoff.
 ChangesEnvironment=yes
 UninstallDisplayName={#AppName} {#AppVersion}
-UninstallDisplayIcon={app}\agent-audit.exe
+UninstallDisplayIcon={app}\{#AppName}.exe
 OutputDir=..\dist
-OutputBaseFilename=agent-audit-setup-{#AppVersion}
+OutputBaseFilename={#AppName}-setup-{#AppVersion}
 Compression=lzma
 SolidCompression=yes
 
 [Files]
-Source: "..\dist\agent-audit.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\{#AppName}.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
 ; Append the install directory to the machine PATH. The Check skips the append
