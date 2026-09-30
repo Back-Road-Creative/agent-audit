@@ -168,8 +168,15 @@ findings against last week's.
 ### Cost control
 
 `--budget-usd` is a runaway-loop ceiling per pass, not a spending target. A pass that trips
-it returns nothing and its section of the report comes out empty, so setting it low does
-not save money — it silently produces a worse report. The default is deliberately generous.
+it returns nothing, so setting it low does not save money — it produces a worse report.
+The default is deliberately generous.
+
+A pass that fails, times out, or returns no `structured_output`, or one whose shape does
+not match its schema (a missing required field, a wrong type), is not treated as "no
+findings". It is listed under **Coverage gaps** with the reason, and that section is what
+tells a clean result apart from an ungraded one. A well-formed empty findings list is a
+real answer and is not a gap. The command still exits 0 when some passes fail, because a
+partial report is written; read the gaps section before trusting a report as clean.
 
 `--model` is passed straight through to the CLI, so you can run the cheap passes on a small
 model.

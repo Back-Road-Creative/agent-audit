@@ -276,3 +276,147 @@ def test_a_command_that_widens_the_tool_set_is_refused(monkeypatch):
     monkeypatch.setattr(runner.subprocess, "run", must_not_run)
     with pytest.raises(runner.AgentError, match="read-only"):
         runner.call_claude("prompt", None)
+
+
+# --- result validation: empty is not the same as ungraded ---------------------
+
+FINDINGS = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"severity": {"type": "string"}, "n": {"type": "integer"}},
+                "required": ["severity"],
+            },
+        },
+    },
+    "required": ["summary", "findings"],
+}
+ROWS = {
+    "type": "array",
+    "items": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]},
+}
+
+
+def _call_with_stdout(monkeypatch, payload, schema):
+    stdout = payload if isinstance(payload, str) else json.dumps(payload)
+    monkeypatch.setattr(runner.subprocess, "run", lambda *a, **k: _proc(0, stdout))
+    return runner.call_claude("prompt", schema)
+
+
+def test_valid_empty_findings_list_succeeds(monkeypatch):
+    payload = {"is_error": False, "structured_output": {"summary": "clean", "findings": []}}
+    env = _call_with_stdout(monkeypatch, payload, FINDINGS)
+    assert runner.output(env)["findings"] == []
+
+
+def test_valid_empty_boxed_array_succeeds(monkeypatch):
+    payload = {"is_error": False, "structured_output": {"items": []}}
+    assert runner.rows(_call_with_stdout(monkeypatch, payload, ROWS)) == []
+
+
+def test_bare_list_for_an_array_schema_is_still_accepted(monkeypatch):
+    payload = {"is_error": False, "structured_output": [{"name": "a"}]}
+    assert runner.rows(_call_with_stdout(monkeypatch, payload, ROWS)) == [{"name": "a"}]
+
+
+def test_absent_structured_output_is_a_failure(monkeypatch):
+    with pytest.raises(runner.AgentError, match="structured_output"):
+        _call_with_stdout(monkeypatch, {"is_error": False, "result": "prose only"}, FINDINGS)
+
+
+def test_null_structured_output_is_a_failure(monkeypatch):
+    with pytest.raises(runner.AgentError, match="structured_output"):
+        _call_with_stdout(monkeypatch, {"is_error": False, "structured_output": None}, FINDINGS)
+
+
+def test_structured_output_that_is_a_json_string_is_a_failure(monkeypatch):
+    payload = {"is_error": False, "structured_output": '{"summary": "x", "findings": []}'}
+    with pytest.raises(runner.AgentError, match=r"structured_output.*string"):
+        _call_with_stdout(monkeypatch, payload, FINDINGS)
+
+
+def test_malformed_stdout_is_still_a_failure(monkeypatch):
+    with pytest.raises(runner.AgentError, match="non-JSON"):
+        _call_with_stdout(monkeypatch, "{not json", FINDINGS)
+
+
+def test_non_object_envelope_is_a_failure(monkeypatch):
+    with pytest.raises(runner.AgentError, match="not a JSON object"):
+        _call_with_stdout(monkeypatch, "[1, 2]", FINDINGS)
+
+
+def test_missing_required_field_names_the_field(monkeypatch):
+    payload = {"is_error": False, "structured_output": {"summary": "x"}}
+    with pytest.raises(runner.AgentError, match=r"findings.*required"):
+        _call_with_stdout(monkeypatch, payload, FINDINGS)
+
+
+def test_wrong_top_level_type_is_a_failure(monkeypatch):
+    payload = {"is_error": False, "structured_output": {"items": "nope"}}
+    with pytest.raises(runner.AgentError, match=r"items.*array"):
+        _call_with_stdout(monkeypatch, payload, ROWS)
+
+
+def test_wrong_item_type_names_the_index(monkeypatch):
+    payload = {
+        "is_error": False,
+        "structured_output": {"summary": "x", "findings": [{"severity": "low"}, "oops"]},
+    }
+    with pytest.raises(runner.AgentError, match=r"findings\[1\].*object"):
+        _call_with_stdout(monkeypatch, payload, FINDINGS)
+
+
+def test_wrong_field_type_inside_an_item_is_a_failure(monkeypatch):
+    payload = {
+        "is_error": False,
+        "structured_output": {"summary": "x", "findings": [{"severity": 3}]},
+    }
+    with pytest.raises(runner.AgentError, match=r"findings\[0\]\.severity.*string"):
+        _call_with_stdout(monkeypatch, payload, FINDINGS)
+
+
+def test_boolean_is_not_an_integer(monkeypatch):
+    payload = {
+        "is_error": False,
+        "structured_output": {"summary": "x", "findings": [{"severity": "s", "n": True}]},
+    }
+    with pytest.raises(runner.AgentError, match=r"findings\[0\]\.n.*integer"):
+        _call_with_stdout(monkeypatch, payload, FINDINGS)
+
+
+def test_nullable_union_type_accepts_null(monkeypatch):
+    schema = {
+        "type": "object",
+        "properties": {"n": {"type": ["integer", "null"]}},
+        "required": ["n"],
+    }
+    payload = {"is_error": False, "structured_output": {"n": None}}
+    assert runner.output(_call_with_stdout(monkeypatch, payload, schema)) == {"n": None}
+
+
+def test_no_schema_means_no_structured_output_is_required(monkeypatch):
+    env = _call_with_stdout(monkeypatch, {"is_error": False, "result": "text"}, None)
+    assert env["result"] == "text"
+
+
+def test_diagnostics_are_bounded(monkeypatch):
+    rows_ = [{"severity": i} for i in range(50)]
+    payload = {"is_error": False, "structured_output": {"summary": "x", "findings": rows_}}
+    with pytest.raises(runner.AgentError) as info:
+        _call_with_stdout(monkeypatch, payload, FINDINGS)
+    assert len(str(info.value)) < 1000
+    assert "more" in str(info.value)
+
+
+def test_an_ungraded_pass_surfaces_as_a_coverage_gap(monkeypatch):
+    monkeypatch.setattr(
+        runner.subprocess, "run", lambda *a, **k: _proc(0, json.dumps({"is_error": False}))
+    )
+    results = runner.fan_out([("security", "p", FINDINGS)], call=runner.call_claude)
+    (gap,) = runner.coverage_gaps(results)
+    assert gap.startswith("security: ")
+    assert "structured_output" in gap

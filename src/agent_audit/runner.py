@@ -81,6 +81,89 @@ def as_object_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
+#: Validation problems reported per pass before the rest are summarised as a count.
+MAX_SCHEMA_PROBLEMS = 5
+
+
+def _json_type(value: Any) -> str:
+    """JSON-schema name of a decoded JSON value."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    return "object"
+
+
+def _type_matches(value: Any, expected: str) -> bool:
+    actual = _json_type(value)
+    return actual == expected or (expected == "number" and actual == "integer")
+
+
+def schema_problems(value: Any, schema: dict[str, Any], path: str) -> list[str]:
+    """Where ``value`` departs from ``schema``, as ``"<path>: <problem>"`` lines.
+
+    Checks the subset of JSON Schema this package's own schemas use — ``type``
+    (including a list of types), ``required``, ``properties`` and ``items``.
+    Enums and formats are not enforced: a value the model chose badly is still
+    a graded result, whereas a missing or wrong-shaped one is not.
+    """
+    expected = schema.get("type")
+    if expected is not None:
+        allowed = [expected] if isinstance(expected, str) else list(expected)
+        if not any(_type_matches(value, t) for t in allowed):
+            return [f"{path}: expected {' or '.join(allowed)}, got {_json_type(value)}"]
+    problems: list[str] = []
+    if isinstance(value, dict):
+        for name in schema.get("required", []):
+            if name not in value:
+                problems.append(f"{path}.{name}: required field missing")
+        for name, sub in (schema.get("properties") or {}).items():
+            if name in value and isinstance(sub, dict):
+                problems += schema_problems(value[name], sub, f"{path}.{name}")
+    elif isinstance(value, list) and isinstance(schema.get("items"), dict):
+        for index, item in enumerate(value):
+            problems += schema_problems(item, schema["items"], f"{path}[{index}]")
+    return problems
+
+
+def validate_result(envelope: dict[str, Any], schema: dict[str, Any] | None) -> None:
+    """Raise :class:`AgentError` unless ``envelope`` carries a well-shaped result.
+
+    An empty findings list that matches the schema is a real answer ("nothing
+    found") and passes. A missing, null or wrong-shaped ``structured_output`` is
+    not an answer at all: the pass was never graded, and reading it as "no
+    findings" would print a clean report over a hole.
+    """
+    if schema is None:
+        return
+    value = envelope.get("structured_output")
+    if value is None:
+        raise AgentError(
+            "pass returned no structured_output "
+            f"(envelope keys: {', '.join(sorted(envelope)) or 'none'}); it was not graded"
+        )
+    # :func:`rows` also accepts a bare list for a boxed array schema; so does this.
+    if schema.get("type") == "array" and isinstance(value, list):
+        target = schema
+    else:
+        target = as_object_schema(schema)
+    problems = schema_problems(value, target, "structured_output")
+    if problems:
+        shown = problems[:MAX_SCHEMA_PROBLEMS]
+        extra = len(problems) - len(shown)
+        if extra:
+            shown.append(f"(+{extra} more)")
+        raise AgentError("pass returned malformed structured_output: " + "; ".join(shown))
+
+
 def failure_detail(proc: subprocess.CompletedProcess[str]) -> str | None:
     """Describe a failed run, or ``None`` when it succeeded.
 
@@ -188,7 +271,8 @@ def call_claude(
 ) -> dict[str, Any]:
     """Run one analysis pass and return the parsed result envelope.
 
-    Raises :class:`AgentError` on timeout, failure, or unparseable output.
+    Raises :class:`AgentError` on timeout, failure, unparseable output, or — when
+    a ``schema`` was requested — a missing or wrong-shaped ``structured_output``.
     """
     cmd = build_command(prompt, schema, budget_usd=budget_usd, model=model)
     assert_read_only(cmd)
@@ -205,9 +289,13 @@ def call_claude(
     if detail is not None:
         raise AgentError(f"pass failed: {detail}")
     try:
-        return json.loads(proc.stdout)
+        envelope = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
         raise AgentError(f"pass returned non-JSON: {exc}") from exc
+    if not isinstance(envelope, dict):
+        raise AgentError(f"pass result is not a JSON object (got {_json_type(envelope)})")
+    validate_result(envelope, schema)
+    return envelope
 
 
 def output(envelope: dict[str, Any]) -> dict[str, Any]:
