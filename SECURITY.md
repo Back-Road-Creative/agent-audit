@@ -30,6 +30,15 @@ Useful context when judging severity:
   open the files themselves, and everything untrusted is wrapped in an explicit data frame
   saying it is data rather than instructions. This is a mitigation for prompt injection
   from an audited file, not a guarantee against it.
+- **Each pass runs with a read-only tool set.** The launcher starts `claude` with
+  `--tools=Read,Grep,Glob`, an explicit `--disallowedTools` list (shell, edit, write,
+  notebook, web fetch and search) and `--strict-mcp-config` (no MCP servers). Before
+  launching, it refuses any command that lacks these flags or adds a widening one
+  (`--allowedTools`, `--permission-mode`, `--dangerously-skip-permissions`, `--mcp-config`,
+  `--add-dir`), so a code change cannot silently drop the boundary. This limits what an
+  injected instruction can *do*; it does not stop a pass from *reading* any file your user
+  account can read, because audited files are read in place, not copied to an isolated
+  directory.
 
 ## Known limits, not vulnerabilities
 

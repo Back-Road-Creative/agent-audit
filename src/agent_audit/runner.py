@@ -32,6 +32,36 @@ DEFAULT_TIMEOUT_S = int(os.environ.get("AGENT_AUDIT_TIMEOUT_S", "600"))
 # prompt dominates cache-creation, so the default is deliberately generous.
 DEFAULT_BUDGET_USD = 5.00
 
+#: The only built-in tools an analysis pass may use: read files, search them.
+#: The files being audited are untrusted input — they can carry instructions
+#: aimed at the auditor — so the boundary is enforced by the launcher, below
+#: the prompt, not by asking the model to behave.
+READ_ONLY_TOOLS: tuple[str, ...] = ("Read", "Grep", "Glob")
+
+#: Tools named in ``--disallowedTools`` as a second line of defence: anything
+#: that writes, executes, or reaches the network.
+DENIED_TOOLS: tuple[str, ...] = (
+    "Bash",
+    "Edit",
+    "Write",
+    "MultiEdit",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+)
+
+#: Flags that would widen the capability set. :func:`assert_read_only` refuses a
+#: command carrying any of them, whoever added it.
+_WIDENING_FLAGS = (
+    "--allowedTools",
+    "--allowed-tools",
+    "--dangerously-skip-permissions",
+    "--allow-dangerously-skip-permissions",
+    "--permission-mode",
+    "--mcp-config",
+    "--add-dir",
+)
+
 
 class AgentError(RuntimeError):
     """An analysis pass failed, timed out, or returned unparseable output."""
@@ -99,12 +129,53 @@ def build_command(
         "--max-budget-usd",
         str(budget_usd),
         "--no-session-persistence",
+        # ``=`` form: these flags take variadic values, and a bare value list
+        # would swallow whatever argument follows it.
+        f"--tools={','.join(READ_ONLY_TOOLS)}",
+        f"--disallowedTools={','.join(DENIED_TOOLS)}",
+        "--strict-mcp-config",
     ]
     if model:
         cmd += ["--model", model]
     if schema is not None:
         cmd += ["--json-schema", json.dumps(as_object_schema(schema))]
     return cmd
+
+
+def _flag_values(cmd: list[str], flag: str) -> list[str] | None:
+    """Comma-split values of ``--flag=a,b`` / ``--flag a,b`` in ``cmd``, or ``None``."""
+    for i, token in enumerate(cmd):
+        if token == flag and i + 1 < len(cmd):
+            return [v for v in cmd[i + 1].split(",") if v]
+        if token.startswith(flag + "="):
+            return [v for v in token.split("=", 1)[1].split(",") if v]
+    return None
+
+
+def assert_read_only(cmd: list[str]) -> None:
+    """Refuse to launch a command that does not carry the read-only restrictions.
+
+    Raises :class:`AgentError` rather than running unrestricted, so a future
+    change to :func:`build_command` that drops or widens the boundary fails
+    loudly instead of silently handing untrusted input a writable agent.
+    """
+    tools = _flag_values(cmd, "--tools")
+    denied = _flag_values(cmd, "--disallowedTools")
+    problems = []
+    if tools is None or not set(tools) <= set(READ_ONLY_TOOLS):
+        problems.append(f"--tools must be a subset of {','.join(READ_ONLY_TOOLS)}")
+    if denied is None or not set(DENIED_TOOLS) <= set(denied):
+        problems.append("--disallowedTools must name every write/execute/network tool")
+    if "--strict-mcp-config" not in cmd:
+        problems.append("--strict-mcp-config is missing")
+    for token in cmd:
+        flag = token.split("=", 1)[0]
+        if flag in _WIDENING_FLAGS:
+            problems.append(f"{flag} widens the capability set")
+    if problems:
+        raise AgentError(
+            "refusing to launch: command is not read-only (" + "; ".join(problems) + ")"
+        )
 
 
 def call_claude(
@@ -120,6 +191,7 @@ def call_claude(
     Raises :class:`AgentError` on timeout, failure, or unparseable output.
     """
     cmd = build_command(prompt, schema, budget_usd=budget_usd, model=model)
+    assert_read_only(cmd)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
     except FileNotFoundError as exc:
